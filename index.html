@@ -1,0 +1,293 @@
+<html>
+<head>
+
+<script>
+
+Math.clamp = function(value,min,max) {
+	return Math.max(min,Math.min(max,value));
+}
+
+Math.fixed = function(value,decimals) {
+	let p = Number.parseFloat(value).toString().split('.');
+	if( p[1] == undefined ) p[1] = '0';
+	while( p[1].length < decimals ) p[1]+='0';
+	return p[0]+'.'+p[1].substr(0,decimals);
+}
+
+Object.each = function(obj,fn) {
+	for( let key in obj ) {
+		fn(obj[key],key);
+	}
+}
+
+
+let filter = {};
+filter.actor = (subject)=>{
+	let list = {
+		"me": ['i','my','myself']
+	};
+	let result = subject;
+	Object.each( list, (equivalents,word) => {
+		if( equivalents.includes(subject) ) {
+			result = word;
+		}
+	});
+	return result;
+}
+filter.verb = (subject)=>{
+	let list = {
+		"is": ['am','are','be']
+	};
+	let result = subject;
+	Object.each( list, (equivalents,word) => {
+		if( equivalents.includes(subject) ) {
+			result = word;
+		}
+	});
+	return result;
+}
+
+class Verb {
+	constructor(verbObject) {
+		Object.assign( this, {
+			verb: null,
+			action: null,
+			amount: 0,
+			algo: null,
+		}, verbObject);
+		this.verb   = this.verb.trim();
+		this.action = this.action.trim();
+	}
+}
+
+class VerbList {
+	constructor() {
+		this.list = [];
+	}
+	add(verbObject) {
+		this.list.push(new Verb(verbObject));
+	}
+	contains(verbString) {
+		let result = this.list.some( v => v.verb == verbString );
+		return result;
+	}
+	findAll(verbString) {
+		let result = this.list.filter( v => v.verb == verbString );
+		return result;
+	}
+}
+
+class Event {
+	constructor() {
+		this.sentence = null;
+		this.actor  = null;
+		this.verb   = null;
+		this.target = null;
+	}
+	create(eventString) {
+		this.sentence = eventString;
+		let part = eventString.toLowerCase().trim().split(' ').map( s=>s.trim() );
+		this.actor  = filter.actor(part[0].trim());
+		this.verb   = filter.verb(part[1].trim());
+		while( this.verb !== 'is' && this.verb.substring(this.verb.length-1) == 's' ) {
+			this.verb = this.verb.substring(0,this.verb.length-1);
+		}
+		this.target = part[2].trim();
+		console.assert( verbList.contains(this.verb) );
+		console.assert( this.actor && this.verb && this.target );
+		return this;
+	}
+}
+
+class EventList {
+	constructor() {
+		this.list = [];
+	}
+	add(eventString) {
+		let eventStringList = Array.isArray(eventString) ? eventString : [eventString];
+		eventStringList.forEach( eventString => {
+			this.list.push( new Event().create(eventString) );
+		});
+	}
+}
+
+
+
+class Opinion {
+	constructor(defaultOpinions) {
+		Object.assign( this, defaultOpinions );
+		this.optimismAboutNewThings = 1.0;	// Just a personal characteristic.
+		this.speedIChange = 1.0;			// child=3.0, naive=2.0, adult=1.0, grandpa=0.5
+		this.other = {};
+	}
+	getIdentity(actor) {
+		return this.identity[actor]||false;
+	}
+	getLike(thing,defaultValue=this.optimismAboutNewThings) {
+		if( this.like[thing] === undefined ) {
+			return defaultValue;
+		}
+		return this.like[thing];
+	}
+	getNeed(thing,defaultValue) {
+		if( this.like[thing] === undefined ) {
+			return defaultValue;
+		}
+		return this.like[thing];
+	}
+	neverSeen(thing) {
+		return this.like[thing] === undefined;
+	}
+
+	adjustIdentity( identity, amount ) {
+		this.identity[identity] = amount;
+		console.log("I am a",identity,amount);
+	}
+
+	adjustOther( actor, target, what ) {
+		this.other[actor] = this.other[actor] || Object.assign( {}, defaultOpinions );
+		this.other[actor][target] = what;
+		console.log(actor,'needs',target);
+	}
+
+	adjustNeed( need ) {
+		this.need[need] = 1.0;
+		console.log("I need",need);
+	}
+
+	adjustLike( target, modifier, speedIChange = this.speedIChange ) {
+		let like = this.getLike(target,0.0);
+		like += modifier * speedIChange;
+		like = Math.clamp(like,-1.0,1.0);
+		this.like[target] = like;
+		console.log('set me like',target,(modifier>=0?'+':'')+Math.fixed(modifier,2),'to',Math.fixed(like,2));
+	}
+}
+
+
+let andHowMuchILikeTargetAndNeed = function(something) {
+	return function() {
+		let need = this.opinion.getNeed(something,0.0);		// how much do I care about this thing?
+		let like = this.opinion.getLike(this.target,0.0);	// never heard of the thing being sheltered? Then this thing I'm hearing about is unimportant.
+		let modifier = this.amount*need*0.5 + this.amount*like*0.5;
+		this.opinion.adjustLike( this.actor, modifier );
+	}
+}
+
+let andHowMuchILikeTarget = function() {
+	let modifier = this.amount * this.opinion.getLike(this.target);
+	this.opinion.adjustLike( this.actor, modifier );
+};
+
+let adjustIdentity = function() {
+	// Are we establishing
+	if( this.identity ) {
+		this.opinion.adjustIdentity(this.target,this.identity*this.amount);
+		return;
+	}
+	andHowMuchILikeTarget.call(this);
+
+//	let modifier = this.amount;
+//	this.opinion.adjustLike( this.actor, modifier );
+};
+
+let adjustNeed = function() {
+	if( this.isMe ) {
+		this.opinion.adjustNeed(this.target);
+		return;
+	}
+
+	this.opinion.adjustOther(this.actor,this.target,1);
+}
+
+let meetsNeed = function() {
+}
+
+
+let verbList = new VerbList();
+
+verbList.add( { verb: 'is',	 	 	action: 'am',   amount:  0.2, algo: adjustIdentity } );
+verbList.add( { verb: 'profession',	action: 'am',   amount:  0.2, algo: adjustIdentity } );
+verbList.add( { verb: 'race',		action: 'am',   amount:  0.2, algo: adjustIdentity } );
+verbList.add( { verb: 'culture',	action: 'am',   amount:  0.4, algo: adjustIdentity } );
+verbList.add( { verb: 'inhabit',	action: 'am',   amount:  0.3, algo: adjustIdentity } );
+verbList.add( { verb: 'need',	 	action: 'need', amount:  1.0, algo: adjustNeed } );
+
+verbList.add( { verb: 'lead',	 	action: 'like', amount:  0.5, algo: andHowMuchILikeTarget } );
+verbList.add( { verb: 'attack',	 	action: 'like', amount: -0.7, algo: andHowMuchILikeTarget } );
+verbList.add( { verb: 'insult',	 	action: 'like', amount: -0.2, algo: andHowMuchILikeTarget } );
+verbList.add( { verb: 'shelter', 	action: 'like', amount:  0.4, algo: andHowMuchILikeTargetAndNeed('shelter') } );
+verbList.add( { verb: 'help',	 	action: 'like', amount:  0.3, algo: andHowMuchILikeTarget } );
+verbList.add( { verb: 'provide',	action: 'give', amount:  0.3, algo: meetsNeed } );
+
+let eventList = new EventList();
+
+eventList.add([
+	'i inhabit town',
+	'town shelters me',
+	'town shelters parent',
+	'i race dwarf',
+	'dwarf need honor',
+	'meat is food',
+	'orcs attack town',
+	'zog leads orcs',
+	'zog is orcs',
+	'joe insult orcs',
+	'dimdale provide me meat'
+]);
+
+let defaultOpinions = {
+	identity:   { me: 1.0 },
+	like: { me: 0.9, children: 1.0, parent: 0.8, mate: 0.7 },
+	need: { food: 1.0, shelter: 0.7, health: 0.9, love: 0.7, money: 0.7 }
+}
+
+class Person {
+	constructor(verbList,eventList) {
+		this.verbList  = verbList;
+		this.eventList = eventList;
+		this.opinion   = new Opinion(defaultOpinions);
+	}
+	formOpinion(event) {
+		console.log( '"'+event.sentence+'"' );
+		let list     = this.verbList.findAll(event.verb);
+		let actor    = event.actor;
+		let identity = this.opinion.getIdentity(actor);
+		let target   = event.target;
+		let isMe     = actor=='me';	// later, check the credibility of the actor
+		list.forEach( verb => {
+			let context = {
+				identity:	identity,
+				isMe:		isMe,
+				action:		verb.action,
+				amount:		verb.amount,
+				actor:		actor,
+				target:		target,
+				opinion:	this.opinion,
+				verb:		verb,
+				event:		event,
+			}
+			verb.algo.call( context );
+		});
+
+	}
+	consider() {
+		this.eventList.list.forEach( event => {
+			this.formOpinion(event);
+		});
+
+	}
+}
+
+let bill = new Person(verbList,eventList);
+bill.consider();
+
+console.log( bill.opinion );
+</script>
+
+
+
+</head>
+<body>
+</body>
+</html>
